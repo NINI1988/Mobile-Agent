@@ -42,6 +42,7 @@ export const useSessionStore = defineStore('session', () => {
   const savedSessions = ref<SavedSession[]>([]);
   const currentSession = ref<SavedSession | null>(null);
   const messages = ref<ChatMessage[]>([]);
+  const queuedPrompts = ref<string[]>([]);
   const toolCalls = ref<Map<string, ToolCallInfo>>(new Map());
   const isConnected = ref(false);
   const isLoading = ref(false);
@@ -183,6 +184,20 @@ export const useSessionStore = defineStore('session', () => {
     if (saved) {
       savedSessions.value = saved;
     }
+
+    // Restore which saved session was active when the page was closed so
+    // App.vue can reconnect it after the stores and agent config are ready.
+    // An empty id means the user explicitly disconnected. For stores created
+    // before this key existed, fall back to the most recently used resumable
+    // session once as a migration.
+    const activeSessionId = await store.get<string>('activeSessionId');
+    if (activeSessionId) {
+      currentSession.value = savedSessions.value.find((s) => s.id === activeSessionId) ?? null;
+    } else if (activeSessionId === null) {
+      currentSession.value = savedSessions.value
+        .filter((s) => s.supportsLoadSession)
+        .sort((a, b) => b.lastUpdated - a.lastUpdated)[0] ?? null;
+    }
     
     // Load app version (Tauri API on desktop/mobile, build-time inject on web)
     try {
@@ -195,6 +210,7 @@ export const useSessionStore = defineStore('session', () => {
   async function saveSessionsToStore() {
     if (store) {
       await store.set('sessions', savedSessions.value);
+      await store.set('activeSessionId', currentSession.value?.id ?? '');
       await store.save();
     }
   }
@@ -210,6 +226,7 @@ export const useSessionStore = defineStore('session', () => {
     acpClient = null;
     isConnected.value = false;
     isLoading.value = false;
+    queuedPrompts.value = [];
     pendingPermission.value = null;
     // Keep `currentSession` so the UI can offer a reconnect (the Mobile
     // Agent server keeps the agent process alive across the drop).
@@ -808,6 +825,13 @@ export const useSessionStore = defineStore('session', () => {
       throw new Error('No active session');
     }
 
+    // ACP v1 keeps session/prompt pending for the full turn. Queue follow-up
+    // messages locally instead of sending overlapping prompt requests.
+    if (isLoading.value) {
+      queuedPrompts.value.push(text);
+      return;
+    }
+
     // Add user message
     messages.value.push({
       id: crypto.randomUUID(),
@@ -844,6 +868,12 @@ export const useSessionStore = defineStore('session', () => {
       }
     } finally {
       isLoading.value = false;
+      const nextPrompt = queuedPrompts.value.shift();
+      if (nextPrompt && isConnected.value && acpClient) {
+        void sendPrompt(nextPrompt).catch((e) => {
+          error.value = e instanceof Error ? e.message : String(e);
+        });
+      }
     }
   }
 
@@ -916,6 +946,7 @@ export const useSessionStore = defineStore('session', () => {
     
     currentSession.value = null;
     isConnected.value = false;
+    queuedPrompts.value = [];
     messages.value = [];
     toolCalls.value.clear();
     availableModes.value = [];
@@ -925,6 +956,7 @@ export const useSessionStore = defineStore('session', () => {
     currentModelId.value = '';
     serverSessionId.value = null;
     pendingElicitation.value = null;
+    await saveSessionsToStore();
   }
 
   // Delete saved session
@@ -1030,6 +1062,7 @@ export const useSessionStore = defineStore('session', () => {
     savedSessions,
     currentSession,
     messages,
+    queuedPrompts,
     isConnected,
     isLoading,
     isConnecting,

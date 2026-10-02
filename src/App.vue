@@ -140,6 +140,14 @@ onMounted(async () => {
     selectedAgent.value = configStore.serverDefaultAgent;
   }
 
+  // The session store restores the last active resumable session from disk.
+  // Reflect its agent and working directory in the controls before starting
+  // the automatic reconnect below.
+  if (sessionStore.currentSession) {
+    selectedAgent.value = sessionStore.currentSession.agentName;
+    selectedCwd.value = sessionStore.currentSession.cwd;
+  }
+
   // Hook foreground-reconnect listeners. `pageshow` fires both on initial
   // navigation and when iOS restores a frozen WebView from the back/forward
   // cache, so it complements `visibilitychange` on Safari/iOS.
@@ -150,6 +158,10 @@ onMounted(async () => {
     window.addEventListener('pageshow', scheduleReconnect);
     window.addEventListener('online', handleOnline);
   }
+
+  // `pageshow` can fire before the async store initialization completes on a
+  // full page reload, so make the initial reconnect attempt explicitly here.
+  void sessionStore.tryReconnect();
 });
 
 async function handleAgentSelect(agentName: string) {
