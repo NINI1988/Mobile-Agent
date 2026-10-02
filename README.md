@@ -271,11 +271,11 @@ the project you want to work on:
 curl -fsSL https://raw.githubusercontent.com/NINI1988/Mobile-Agent/main/scripts/install.sh | bash
 ```
 
-The script clones Mobile Agent into `~/.mobile-agent/app`, builds the web bundle, and starts the
-server with the working directory set to the project you ran it from. Install a coding agent
-(e.g. `codex-acp`), open the printed URL on your phone, and sign in from the GUI. Environment
-overrides: `MOBILE_AGENT_CWD`, `MOBILE_AGENT_AGENT`, `PORT`, `MOBILE_AGENT_REPO`, `MOBILE_AGENT_REF`,
-`MOBILE_AGENT_DIR`.
+The script clones Mobile Agent into `~/.mobile-agent/app`, builds the web bundle, installs the
+Codex ACP agent globally, and starts the server with the working directory set to the project you
+ran it from. The server keeps running in the background after the script exits. Open the printed
+URL on your phone and sign in from the GUI. Environment overrides: `MOBILE_AGENT_CWD`,
+`MOBILE_AGENT_AGENT`, `PORT`, `MOBILE_AGENT_REPO`, `MOBILE_AGENT_REF`, `MOBILE_AGENT_DIR`.
 
 ### Configuring agents
 
@@ -284,7 +284,8 @@ this order (highest priority first):
 
 1. `MOBILE_AGENT_AGENTS` — a JSON object in the environment,
 2. `.mobile-agent/agents.json` in the workspace,
-3. a built-in default: **Codex** via `npx -y @agentclientprotocol/codex-acp@latest`.
+3. a built-in default: **Codex** — a globally installed `codex-acp` if present, otherwise
+   `npx -y @agentclientprotocol/codex-acp@latest`.
 
 ```json
 {
@@ -309,6 +310,11 @@ surfaces the verification URL and one-time code as a card in the chat, with a **
 link that opens the sign-in page. Enter the code there and the agent continues automatically —
 there is no terminal step. (The server declares the URL-elicitation capability and answers the
 agent’s `elicitation/create` request itself, then pushes the code to the GUI.)
+
+Mobile Agent only uses **free sign-in paths**: Codex signs in with a ChatGPT account via the
+device-code flow (no API key, no paid API usage). The server sets `NO_BROWSER=1` so the
+browser-callback method — which cannot complete headlessly in a Codespace — is hidden, leaving the
+device-code method as the single, free option.
 
 ### Security
 

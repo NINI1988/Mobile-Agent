@@ -11,24 +11,53 @@
 // without changing the shape.
 
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
+
+/** Look for an executable named `bin` on PATH; return its name or null. */
+function findOnPath(bin) {
+  const exts =
+    process.platform === 'win32' ? ['.cmd', '.exe', '.bat', ''] : [''];
+  for (const dir of (process.env.PATH || '').split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      try {
+        if (existsSync(join(dir, bin + ext))) return bin;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return null;
+}
 
 /**
- * Built-in default agent. Codex is the first supported agent; the
- * `@agentclientprotocol/codex-acp` adapter bundles a compatible Codex
- * binary as a dependency so `npx -y` is all that's needed.
+ * Built-in default agent. Codex is the first supported agent. Prefer a
+ * globally installed `codex-acp` (the dev container and `scripts/install.sh`
+ * install it once) so starting a session is instant; fall back to `npx -y`
+ * for ad-hoc runs. `@agentclientprotocol/codex-acp` bundles a compatible
+ * Codex binary as a dependency, so `npx` alone is enough when it isn't
+ * installed globally.
  *
  * `NO_BROWSER=1` hides the browser-callback ChatGPT auth method (which
  * cannot complete in a headless Codespace) while keeping the device-code
  * method available — exactly the flow we surface in the GUI.
  */
+const CODEX_ACP_INSTALLED = findOnPath('codex-acp');
+
 const DEFAULT_AGENTS = {
-  codex: {
-    name: 'Codex',
-    command: 'npx',
-    args: ['-y', '@agentclientprotocol/codex-acp@latest'],
-    env: { NO_BROWSER: '1' },
-  },
+  codex: CODEX_ACP_INSTALLED
+    ? {
+        name: 'Codex',
+        command: 'codex-acp',
+        args: [],
+        env: { NO_BROWSER: '1' },
+      }
+    : {
+        name: 'Codex',
+        command: 'npx',
+        args: ['-y', '@agentclientprotocol/codex-acp@latest'],
+        env: { NO_BROWSER: '1' },
+      },
 };
 
 /** Convert an arbitrary agent name into a URL-safe id. */

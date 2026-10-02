@@ -2,9 +2,10 @@
 #
 # Mobile Agent — one-shot installer for a dev container / Codespace.
 #
-# Installs Mobile Agent into a private directory, builds the web bundle, and
-# starts the server pointed at the *current* workspace, so you can drive the
-# project you are in from your phone browser.
+# Installs Mobile Agent into a private directory, builds the web bundle,
+# installs the Codex ACP agent, and starts the server pointed at the *current*
+# workspace, so you can drive the project you are in from your phone browser.
+# The server keeps running in the background after this script exits.
 #
 # Usage (from the root of any project's dev container):
 #
@@ -60,6 +61,16 @@ log "Installing dependencies"
 log "Building web app"
 ( cd "$DIR" && npm run build:web )
 
+# Install the Codex ACP agent globally so sessions start instantly. Non-fatal:
+# if it fails, the server falls back to `npx -y @agentclientprotocol/codex-acp`.
+if command -v codex-acp >/dev/null 2>&1; then
+  log "Codex ACP agent already installed"
+else
+  log "Installing Codex ACP agent (@agentclientprotocol/codex-acp)"
+  npm install -g @agentclientprotocol/codex-acp@latest --no-audit --no-fund \
+    || err "Could not install codex-acp globally; the server will use npx instead."
+fi
+
 # Stop a previous instance, if any.
 if pgrep -f "$DIR/server/index.mjs" >/dev/null 2>&1; then
   log "Stopping previous server"
@@ -70,18 +81,20 @@ fi
 log "Starting server on port $PORT (workspace: $WORKSPACE)"
 cd "$DIR"
 PORT="$PORT" MOBILE_AGENT_CWD="$WORKSPACE" MOBILE_AGENT_AGENT="${MOBILE_AGENT_AGENT:-codex}" \
+  MOBILE_AGENT_OPEN=0 \
   nohup node server/index.mjs > /tmp/mobile-agent.log 2>&1 &
 
 sleep 2
 if pgrep -f "$DIR/server/index.mjs" >/dev/null 2>&1; then
-  log "Server running. Logs: /tmp/mobile-agent.log"
+  log "Server started in the background — it keeps running after this script exits."
+  log "Logs: /tmp/mobile-agent.log"
   if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
-    log "Open in your phone browser:"
+    log "Open this URL on your phone (the Codespace Ports tab opens it automatically):"
     log "  https://${CODESPACE_NAME}-${PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
   else
     log "Open: http://localhost:${PORT}"
   fi
-  log "Install a coding agent if you haven't (e.g. Codex via codex-acp), then sign in from the GUI."
+  log "Codex is installed — sign in from the GUI (Authentication Required → device code)."
 else
   err "Server failed to start — check /tmp/mobile-agent.log"
   exit 1

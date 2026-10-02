@@ -19,7 +19,8 @@ Markdown) is reused unchanged.
 
 - `server/` — plain Node ESM, no build step, no framework:
   - `index.mjs` — HTTP static server (`dist-web/`) + JSON API + WebSocket upgrade at `/ws`.
-  - `agents.mjs` — agent registry (`MOBILE_AGENT_AGENTS` env → `.mobile-agent/agents.json` → built-in Codex).
+  - `agents.mjs` — agent registry (`MOBILE_AGENT_AGENTS` env → `.mobile-agent/agents.json` →
+    built-in Codex: global `codex-acp` if on PATH, else `npx -y @agentclientprotocol/codex-acp`).
   - `session.mjs` — `Session`/`SessionManager`: spawns the agent, routes frames, buffers
     `$/mobileAgent/*` server notes, survives disconnects.
   - `auth.mjs` — Codex device-code login: injects the URL-elicitation capability, answers
@@ -27,8 +28,10 @@ Markdown) is reused unchanged.
   - `test/` — `node:test` suite + `mock-agent.mjs` (a tiny ACP agent).
 - `src/lib/server.ts` — client helpers for the server (base URL, `/ws` URL, config fetch).
 - `src/components/ElicitationDialog.vue` — device-code card (copy code + open link).
-- `scripts/install.sh` — `curl | bash` installer for *other* dev containers.
-- `.devcontainer/devcontainer.json` — builds the web app and auto-starts the server.
+- `scripts/install.sh` — `curl | bash` installer for *other* dev containers; installs Codex and
+  starts the server in the background.
+- `.devcontainer/devcontainer.json` — builds the web app, installs Codex, auto-starts the server
+  (`MOBILE_AGENT_OPEN=0`; the port's `onAutoForward: openBrowser` opens the page).
 
 ## Server protocol extensions (not ACP)
 

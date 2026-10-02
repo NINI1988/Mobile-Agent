@@ -11,11 +11,13 @@
       "onAutoForward": "openBrowser"
     }
   },
-  // Build the web bundle and start the Mobile Agent server (static app +
-  // WebSocket ACP bridge). The server keeps agent sessions alive across
-  // phone disconnects and auto-opens the Codespace URL.
-  "postCreateCommand": "npm install && npm run build:web",
-  "postStartCommand": "pgrep -f 'server/index.mjs' >/dev/null || (nohup npm start > /tmp/mobile-agent.log 2>&1 &)",
+  // One-time setup: build the web bundle and install the Codex ACP agent
+  // globally so the first session starts instantly (no npx download).
+  "postCreateCommand": "npm install && npm run build:web && (npm install -g @agentclientprotocol/codex-acp@latest || echo 'codex-acp global install failed; server will fall back to npx')",
+  // Every start: launch the server if it isn't already running. It serves the
+  // web app, the WebSocket ACP bridge, and keeps agent sessions alive across
+  // phone disconnects. Opening the forwarded port auto-opens the browser.
+  "postStartCommand": "pgrep -f 'server/index.mjs' >/dev/null || (MOBILE_AGENT_OPEN=0 nohup npm start > /tmp/mobile-agent.log 2>&1 &)",
   "customizations": {
     "vscode": {
       "extensions": ["Vue.volar"]
