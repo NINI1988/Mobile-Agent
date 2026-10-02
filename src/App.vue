@@ -35,8 +35,15 @@ const showStartupDetails = ref(false);
 // onMounted to default the drawer closed.
 const isNarrowLayout = ref(false);
 let narrowMql: MediaQueryList | null = null;
+let visualViewport: VisualViewport | null = null;
 function syncNarrowLayout() {
   if (narrowMql) isNarrowLayout.value = narrowMql.matches;
+}
+
+function syncVisualViewport() {
+  if (typeof document === 'undefined') return;
+  const height = visualViewport?.height ?? window.innerHeight;
+  document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
 }
 
 // Foreground-reconnect plumbing. Mobile OSes freeze the WebView when the
@@ -103,6 +110,11 @@ const pendingAuthMethods = computed(() => sessionStore.pendingAuthMethods);
 const pendingAuthAgentName = computed(() => sessionStore.pendingAuthAgentName);
 
 onMounted(async () => {
+  visualViewport = typeof window !== 'undefined' ? window.visualViewport : null;
+  syncVisualViewport();
+  window.addEventListener('resize', syncVisualViewport);
+  visualViewport?.addEventListener('resize', syncVisualViewport);
+
   // Track viewport width so the sidebar can default-collapse into a drawer
   // on phones / narrow windows. We watch a MediaQueryList rather than
   // resize for correctness across orientation changes on iOS.
@@ -272,7 +284,10 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('pageshow', scheduleReconnect);
     window.removeEventListener('online', handleOnline);
+    window.removeEventListener('resize', syncVisualViewport);
   }
+  visualViewport?.removeEventListener('resize', syncVisualViewport);
+  visualViewport = null;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -553,6 +568,9 @@ html, body, #app {
 .app-container {
   display: flex;
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -728,6 +746,8 @@ html, body, #app {
 
 .main-area {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -735,6 +755,8 @@ html, body, #app {
 
 .main-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -805,6 +827,8 @@ html, body, #app {
    banner so users immediately read it as transient progress, not failure. */
 .reconnect-banner {
   display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
   gap: 0.6rem;
   padding: 0.75rem 1rem;
@@ -889,6 +913,17 @@ html, body, #app {
   .reconnect-banner,
   .error-banner {
     padding-top: calc(0.75rem + env(safe-area-inset-top, 0px));
+  }
+
+  .reconnect-banner {
+    padding: calc(0.4rem + env(safe-area-inset-top, 0px)) 0.75rem 0.4rem;
+  }
+
+  .reconnect-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sidebar.is-drawer {

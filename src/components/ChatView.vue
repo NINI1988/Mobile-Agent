@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue';
+import { ref, computed, nextTick, watch, onMounted } from 'vue';
 import { marked } from 'marked';
 import { useSessionStore } from '../stores/session';
 import { isMobile } from '../lib/platform';
@@ -12,6 +12,65 @@ const sessionStore = useSessionStore();
 const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
 const commandPaletteRef = ref<InstanceType<typeof CommandPalette> | null>(null);
+const shouldFollowMessages = ref(true);
+
+interface ChatScrollState {
+  scrollTop: number;
+  atBottom: boolean;
+}
+
+function scrollStorageKey(sessionId: string): string {
+  return `mobile-agent:chat-scroll:${sessionId}`;
+}
+
+function readScrollState(sessionId: string): ChatScrollState | null {
+  try {
+    const value = localStorage.getItem(scrollStorageKey(sessionId));
+    if (!value) return null;
+    const state = JSON.parse(value) as Partial<ChatScrollState>;
+    if (typeof state.scrollTop !== 'number' || !Number.isFinite(state.scrollTop)) return null;
+    return { scrollTop: Math.max(0, state.scrollTop), atBottom: state.atBottom === true };
+  } catch {
+    return null;
+  }
+}
+
+function saveScrollState(): void {
+  const container = messagesContainer.value;
+  const sessionId = currentSession.value?.id;
+  if (!container || !sessionId) return;
+
+  const atBottom = container.scrollHeight - container.clientHeight - container.scrollTop <= 80;
+  shouldFollowMessages.value = atBottom;
+  try {
+    localStorage.setItem(scrollStorageKey(sessionId), JSON.stringify({
+      scrollTop: container.scrollTop,
+      atBottom,
+    } satisfies ChatScrollState));
+  } catch {
+    // Scrolling should keep working when browser storage is unavailable.
+  }
+}
+
+async function restoreScrollPosition(): Promise<void> {
+  const container = messagesContainer.value;
+  const sessionId = currentSession.value?.id;
+  if (!container || !sessionId) return;
+
+  const saved = readScrollState(sessionId);
+  if (!saved || saved.atBottom) {
+    container.scrollTop = container.scrollHeight;
+    shouldFollowMessages.value = true;
+  } else {
+    container.scrollTop = saved.scrollTop;
+    shouldFollowMessages.value = false;
+  }
+  saveScrollState();
+}
+
+function handleMessagesScroll(): void {
+  saveScrollState();
+}
 
 // On mobile (iOS/Android) the soft-keyboard's Return key should insert a
 // newline like every other native chat app; submitting is the dedicated
@@ -48,11 +107,25 @@ const commandFilter = computed(() => {
   return inputText.value.slice(1); // Remove the leading "/"
 });
 
-// Auto-scroll to bottom when new messages arrive
-watch(messages, async () => {
+// Restore this session's position after the conversation has rendered.
+onMounted(() => {
+  void nextTick(restoreScrollPosition);
+});
+
+watch(() => currentSession.value?.id, async (sessionId, previousSessionId) => {
+  if (!sessionId || sessionId === previousSessionId) return;
   await nextTick();
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+  await restoreScrollPosition();
+});
+
+// Follow new messages only when the user was already near the bottom.
+watch(messages, async () => {
+  const follow = shouldFollowMessages.value;
+  await nextTick();
+  const container = messagesContainer.value;
+  if (container && follow) {
+    container.scrollTop = container.scrollHeight;
+    saveScrollState();
   }
 }, { deep: true });
 
@@ -183,7 +256,7 @@ function getStatusIcon(status: string): string {
       </div>
     </div>
     
-    <div ref="messagesContainer" class="messages-container">
+    <div ref="messagesContainer" class="messages-container" @scroll="handleMessagesScroll">
       <div 
         v-for="message in messages" 
         :key="message.id"
@@ -278,10 +351,14 @@ function getStatusIcon(status: string): string {
 .chat-view {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .chat-header {
+  flex: 0 0 auto;
   padding: 1rem;
   border-bottom: 1px solid var(--border-color, #e0e0e0);
   display: flex;
@@ -302,6 +379,7 @@ function getStatusIcon(status: string): string {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .agent-name {
@@ -311,6 +389,7 @@ function getStatusIcon(status: string): string {
 
 .messages-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 1rem;
 }
@@ -473,6 +552,7 @@ function getStatusIcon(status: string): string {
 
 .input-container {
   position: relative;
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -533,6 +613,7 @@ textarea:focus {
   .chat-header {
     padding-top: calc(1rem + env(safe-area-inset-top, 0px));
     padding-left: calc(44px + 1rem);
+    gap: 0.5rem;
   }
 
   /* Agent identity is already shown in the sidebar drawer; on a phone the
@@ -553,6 +634,9 @@ textarea:focus {
     /* iOS home-indicator: keep Send button reachable above the gesture area. */
     padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
     gap: 0.5rem;
+    padding-top: 0.75rem;
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
   }
 
   textarea {
@@ -565,6 +649,11 @@ textarea:focus {
     min-width: 64px;
     min-height: 44px;
     padding: 0.5rem 1rem;
+  }
+
+  .header-right {
+    flex: 1;
+    justify-content: flex-end;
   }
 }
 
