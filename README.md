@@ -504,8 +504,8 @@ npm run build:web     # produce dist-web/
 npm start             # serve dist-web/ + WebSocket bridge on PORT (default 12000)
 
 npm run serve         # build:web then start, in one step
-npm run dev:web       # Vite dev server (HMR); it proxies /ws and /api to npm run dev:server
-npm run dev:server    # server only
+npm run dev:web       # Vite dev server (HMR); proxies /ws and /api to localhost:12000
+npm run dev:server    # server with automatic restart when server files change
 
 npm run test:server   # node:test suite for the bridge (uses a mock ACP agent)
 ```

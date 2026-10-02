@@ -13,7 +13,7 @@
     "server": "node server/index.mjs",
     "start": "node server/index.mjs",
     "serve": "npm run build:web && node server/index.mjs",
-    "dev:server": "node server/index.mjs",
+    "dev:server": "node --watch server/index.mjs",
     "test:server": "node --test server/test/server.test.mjs",
     "tauri": "tauri"
   },
