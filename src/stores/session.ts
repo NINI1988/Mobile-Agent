@@ -653,10 +653,21 @@ export const useSessionStore = defineStore('session', () => {
 
   // Resume existing session
   async function resumeSession(savedSession: SavedSession): Promise<void> {
+    // A session row can receive several taps before the first handshake
+    // finishes. Do not open a second ACP connection for the same store.
+    if (isLoading.value || isConnecting.value) return;
     isLoading.value = true;
     error.value = null;
 
     try {
+      // Switching from another live session must close its transport before
+      // attaching this client to the selected server session.
+      if (acpClient) {
+        const previousClient = acpClient;
+        acpClient = null;
+        await previousClient.disconnect();
+      }
+      isConnected.value = false;
       const configStore = useConfigStore();
       const agentConfig: AgentConfig | undefined = configStore.getAgent(savedSession.agentName);
       if (!agentConfig) {

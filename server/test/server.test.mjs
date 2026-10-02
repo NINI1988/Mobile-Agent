@@ -221,6 +221,12 @@ test('session survives disconnect and replays server notes', async () => {
     'session note should be replayed on reconnect'
   );
 
+  // The agent process survives a dropped browser transport and has already
+  // completed ACP initialize. Reconnecting clients must receive the cached
+  // handshake response before loading the existing session.
+  const reinit = await client2.request('initialize', { protocolVersion: 1 });
+  assert.equal(reinit.result.protocolVersion, 1);
+
   // The session must still work after reattaching.
   const prompt = await client2.request('session/prompt', {
     sessionId: 'sess-mock-1',

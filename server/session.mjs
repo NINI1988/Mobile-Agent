@@ -189,6 +189,9 @@ class Session {
 
     /** agentId -> { clientId, ws } for client-originated requests. */
     this.pendingToAgent = new Map();
+    this.initializeResponse = null;
+    this.initializePending = false;
+    this.initializeWaiters = [];
     /** clientId -> agentId for agent-originated requests. */
     this.pendingToClient = new Map();
     /** serverId -> resolver for server-originated requests. */
@@ -250,6 +253,9 @@ class Session {
       console.log(`[session ${this.id}] ${reason}`);
       this.alive = false;
       this.proc = null;
+      this.initializeResponse = null;
+      this.initializePending = false;
+      this.initializeWaiters = [];
       this.appendLog(reason);
       this.broadcastLog(reason);
       // Close client sockets so their transport reports a close and the UI
@@ -420,9 +426,20 @@ class Session {
     // Request from client -> allocate a fresh agent id and remember the
     // mapping so the response can be routed back to this client.
     if (hasMethod && hasId) {
+      if (msg.method === 'initialize') {
+        if (this.initializeResponse) {
+          this.send(ws, JSON.stringify({ ...this.initializeResponse, id: msg.id }));
+          return;
+        }
+        if (this.initializePending) {
+          this.initializeWaiters.push({ ws, id: msg.id });
+          return;
+        }
+        this.initializePending = true;
+      }
       const clientId = msg.id;
       const agentId = this.nextAgentId++;
-      this.pendingToAgent.set(agentId, { clientId, ws });
+      this.pendingToAgent.set(agentId, { clientId, ws, method: msg.method });
       this.forwardToAgent({ ...injectElicitationCapability(msg), id: agentId });
       return;
     }
@@ -478,9 +495,17 @@ class Session {
 
     // Response to a client-originated request: rewrite back to the client id.
     if (!hasMethod && hasId && this.pendingToAgent.has(msg.id)) {
-      const { clientId } = this.pendingToAgent.get(msg.id);
+      const { clientId, ws, method } = this.pendingToAgent.get(msg.id);
       this.pendingToAgent.delete(msg.id);
-      this.emitToClients(JSON.stringify({ ...msg, id: clientId }));
+      const response = { ...msg, id: clientId };
+      if (method === 'initialize') {
+        this.initializePending = false;
+        if (!msg.error) this.initializeResponse = { ...msg };
+        for (const waiter of this.initializeWaiters.splice(0)) {
+          this.send(waiter.ws, JSON.stringify({ ...msg, id: waiter.id }));
+        }
+      }
+      this.send(ws, JSON.stringify(response));
       return;
     }
 
