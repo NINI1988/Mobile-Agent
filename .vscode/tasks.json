@@ -1,25 +1,24 @@
 {
-  // Run with: Terminal → Run Task… → "Mobile Agent: server"
-  // This keeps the server in the foreground so you can watch its output.
-  // The dev container also starts it in the background on every start; its
-  // log is at /tmp/mobile-agent.log.
+  // Runs automatically when the folder opens, in its own terminal panel, so
+  // the Mobile Agent server output and errors are visible. It starts the
+  // server if needed, then follows /tmp/mobile-agent.log. Stop the task to
+  // stop following; the server itself keeps running in the background.
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Mobile Agent: server",
+      "label": "Mobile Agent: start",
       "type": "shell",
-      "command": "npm start",
-      "options": {
-        "env": {
-          "MOBILE_AGENT_OPEN": "0"
-        }
+      "command": "bash scripts/codespace-start.sh && tail -n +1 -f /tmp/mobile-agent.log",
+      "runOptions": {
+        "runOn": "folderOpen"
       },
-      "isBackground": true,
       "presentation": {
         "reveal": "always",
         "panel": "dedicated",
-        "clear": true
+        "clear": true,
+        "focus": false
       },
+      "isBackground": true,
       "problemMatcher": []
     },
     {

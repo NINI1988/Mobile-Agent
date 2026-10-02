@@ -262,12 +262,25 @@ npm run dev:server
 
 The server prints the URL to open (including the Codespace URL) on startup.
 
-**Where is the server output?** The dev container starts the server in the background, so it does
-not appear in the main terminal. To watch it live, use **Terminal → Run Task… → “Mobile Agent:
-server”** (defined in `.vscode/tasks.json`); that task runs in the foreground in its own panel. The
-background instance writes its output to **`/tmp/mobile-agent.log`**, and the Codespace startup
-logs are under the **Codespaces** output channel (View → Output → Codespaces). To restart it by
-hand: `pkill -f '[s]erver/index.mjs' && npm start`.
+The dev container keeps `.devcontainer/devcontainer.json` small by delegating to two scripts:
+
+| Script | Runs on | Does |
+|--------|---------|------|
+| `scripts/codespace-setup.sh` | `postCreateCommand` | `npm install`, build the web app, install Codex |
+| `scripts/codespace-start.sh` | `postStartCommand`, `postAttachCommand` | start the server if it isn't running |
+
+**Where is the server output?** `postStartCommand` runs invisibly in the background, so its
+output is not in a terminal — it goes to the noisy Codespaces log. To see it, Mobile Agent ships a
+VS Code task in `.vscode/tasks.json` that runs **on folder open** in its own terminal panel
+(*“Mobile Agent: start”*). If VS Code asks whether to allow automatic tasks, choose **Allow and
+Run**. You can also run it via **Terminal → Run Task…**. The background server writes to
+**`/tmp/mobile-agent.log`**; to restart by hand:
+
+```sh
+pkill -f '[s]erver/index.mjs'
+bash scripts/codespace-start.sh            # background
+bash scripts/codespace-start.sh --foreground  # attached to the terminal
+```
 
 ### Using Mobile Agent in another project
 
