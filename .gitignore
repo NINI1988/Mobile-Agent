@@ -49,3 +49,6 @@ Desktop.ini
 *.AppImage
 *.deb
 *.rpm
+
+# Mobile Agent runtime session metadata
+.mobile-agent/sessions.json
