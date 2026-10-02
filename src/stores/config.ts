@@ -5,12 +5,18 @@ import type { AgentsConfig, AgentConfig, AgentTransportKind } from '../lib/types
 import { getTransportKind } from '../lib/types';
 import { restrictedTransports } from '../lib/platform';
 import { getConfig, reloadConfig, getConfigPath, onConfigChanged } from '../lib/host';
+import { fetchServerConfig } from '../lib/server';
 
 export const useConfigStore = defineStore('config', () => {
   const config = ref<AgentsConfig>({ agents: {} });
   const configPath = ref<string>('');
   const loading = ref(false);
   const error = ref<string | null>(null);
+  // True once the Mobile Agent server has been reached and its agents merged.
+  const serverAvailable = ref(false);
+  // Working directory / default agent advertised by the Mobile Agent server.
+  const serverCwd = ref('');
+  const serverDefaultAgent = ref('');
 
   // Stdio agents are listed in the raw config but cannot run on mobile or
   // web builds (no subprocess). Filter them out so the UI never offers an
@@ -56,6 +62,48 @@ export const useConfigStore = defineStore('config', () => {
     } finally {
       loading.value = false;
     }
+    // Merge agents advertised by the Mobile Agent server (if present). This
+    // is what makes `npm start` work with zero client-side configuration.
+    await loadServerAgents();
+  }
+
+  /**
+   * Fetch agents from the Mobile Agent server and merge them into the config.
+   *
+   * Server agents are modelled as `websocket` transports whose URL is filled
+   * in per-session (the session store appends `?agent=...&session=...&cwd=...`).
+   * User-defined agents with the same key win, so a manual override is always
+   * possible.
+   */
+  async function loadServerAgents() {
+    try {
+      const server = await fetchServerConfig();
+      if (server.agents.length === 0) return;
+      const merged: AgentsConfig = { agents: { ...config.value.agents } };
+      for (const agent of server.agents) {
+        const key = agent.name || agent.id;
+        if (merged.agents[key]) continue; // don't clobber user config
+        merged.agents[key] = {
+          transport: 'websocket',
+          url: '', // resolved at connect time from the session store
+          serverAgentId: agent.id,
+          serverName: agent.name,
+        };
+      }
+      config.value = merged;
+      serverAvailable.value = true;
+      serverCwd.value = server.cwd;
+      // Expose the default agent as its config key (the display name), which
+      // is what the UI selects.
+      const defaultEntry = server.agents.find((a) => a.id === server.defaultAgent);
+      serverDefaultAgent.value = defaultEntry
+        ? defaultEntry.name || defaultEntry.id
+        : '';
+    } catch (e) {
+      // Server not reachable (e.g. hosted web build) — that's fine; the app
+      // still works with user-configured remote agents.
+      console.debug('Mobile Agent server not available:', e);
+    }
   }
 
   async function reload() {
@@ -96,6 +144,9 @@ export const useConfigStore = defineStore('config', () => {
     configPath,
     loading,
     error,
+    serverAvailable,
+    serverCwd,
+    serverDefaultAgent,
     agentNames,
     allAgentNames,
     stdioAgentNames,

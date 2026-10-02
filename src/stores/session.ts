@@ -4,11 +4,12 @@ import { ref, computed, watch } from 'vue';
 import { loadKvStore, type KVStore } from '../lib/host/storage';
 import { getAppVersion } from '../lib/host';
 import { trackEvent, trackError } from '../lib/telemetry';
-import type { SavedSession, ChatMessage, ToolCallInfo, PermissionRequest, SessionMode, SlashCommand, ModelInfo, AgentConfig } from '../lib/types';
+import type { SavedSession, ChatMessage, ToolCallInfo, PermissionRequest, SessionMode, SlashCommand, ModelInfo, AgentConfig, ElicitationInfo } from '../lib/types';
 import { getTransportKind } from '../lib/types';
 import { AcpClientBridge, createAcpClient } from '../lib/acp-bridge';
 import { onAgentStderr, spawnAgent, killAgent } from '../lib/host';
 import { isDesktop } from '../lib/platform';
+import { serverWsUrl, deleteServerSession } from '../lib/server';
 import { useConfigStore } from './config';
 import type { SessionNotification, AuthMethod } from '@agentclientprotocol/sdk';
 
@@ -41,6 +42,7 @@ export const useSessionStore = defineStore('session', () => {
   const savedSessions = ref<SavedSession[]>([]);
   const currentSession = ref<SavedSession | null>(null);
   const messages = ref<ChatMessage[]>([]);
+  const queuedPrompts = ref<string[]>([]);
   const toolCalls = ref<Map<string, ToolCallInfo>>(new Map());
   const isConnected = ref(false);
   const isLoading = ref(false);
@@ -52,6 +54,12 @@ export const useSessionStore = defineStore('session', () => {
   const isReconnecting = ref(false);
   const error = ref<string | null>(null);
   const pendingPermission = ref<PermissionRequest | null>(null);
+
+  // Device-code / URL elicitation surfaced by the Mobile Agent server.
+  const pendingElicitation = ref<ElicitationInfo | null>(null);
+  // Server-assigned id for the active session (used to reattach after a
+  // disconnect). Kept separate from the ACP `sessionId` the agent reports.
+  const serverSessionId = ref<string | null>(null);
   
   // Authentication state
   const pendingAuthMethods = ref<AuthMethod[]>([]);
@@ -83,6 +91,83 @@ export const useSessionStore = defineStore('session', () => {
   let acpClient: AcpClientBridge | null = null;
   let store: KVStore | null = null;
 
+  /**
+   * Resolve the effective agent config for a connection.
+   *
+   * For server-provided agents (spawned by the Mobile Agent server) the
+   * config has no concrete URL; we build the WebSocket bridge URL here with
+   * the agent / session / cwd query params the server expects. This is what
+   * lets a reconnect reattach to the *same* server-side session.
+   */
+  function effectiveAgentConfig(
+    agentConfig: AgentConfig,
+    cwd: string,
+    serverSession?: string
+  ): AgentConfig {
+    if (!agentConfig.serverAgentId) return agentConfig;
+    return {
+      ...agentConfig,
+      url: serverWsUrl({
+        agent: agentConfig.serverAgentId,
+        session: serverSession,
+        cwd,
+      }),
+    };
+  }
+
+  /**
+   * Handle a `$/mobileAgent/*` notification from the Mobile Agent server.
+   * These are server extensions, not part of ACP.
+   */
+  function handleServerNotification(method: string, params: unknown): void {
+    const p = (params ?? {}) as Record<string, unknown>;
+    switch (method) {
+      case '$/mobileAgent/session':
+        // Server tells us which session id to reattach to after a drop.
+        if (typeof p.sessionId === 'string') serverSessionId.value = p.sessionId;
+        break;
+      case '$/mobileAgent/log':
+        // Agent stderr lines — surface in the startup progress panel.
+        if (typeof p.line === 'string') {
+          startupLogs.value.push(p.line);
+          const phase = detectPhase(p.line);
+          if (phase) startupPhase.value = phase;
+        }
+        break;
+      case '$/mobileAgent/elicitation':
+        // Codex device-code login: show the URL + code in the GUI.
+        pendingElicitation.value = {
+          url: typeof p.url === 'string' ? p.url : null,
+          code: typeof p.code === 'string' ? p.code : null,
+          message: typeof p.message === 'string' ? p.message : '',
+          elicitationId: typeof p.elicitationId === 'string' ? p.elicitationId : null,
+        };
+        break;
+      case '$/mobileAgent/elicitationComplete':
+        pendingElicitation.value = null;
+        break;
+      case '$/mobileAgent/error':
+        error.value = typeof p.message === 'string' ? p.message : 'Server error';
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Dismiss the device-code / elicitation card. */
+  function dismissElicitation(): void {
+    pendingElicitation.value = null;
+  }
+
+  /** Attach the shared callbacks (session updates, close, server notes). */
+  function attachBridgeCallbacks(client: AcpClientBridge): void {
+    client.onSessionUpdate = handleSessionUpdate;
+    client.onServerNotification = handleServerNotification;
+    client.onTransportClose = (reason) => {
+      handleUnexpectedClose(reason);
+    };
+  }
+
   // Computed
   const hasActiveSession = computed(() => currentSession.value !== null);
   const messageList = computed(() => messages.value);
@@ -99,6 +184,20 @@ export const useSessionStore = defineStore('session', () => {
     if (saved) {
       savedSessions.value = saved;
     }
+
+    // Restore which saved session was active when the page was closed so
+    // App.vue can reconnect it after the stores and agent config are ready.
+    // An empty id means the user explicitly disconnected. For stores created
+    // before this key existed, fall back to the most recently used resumable
+    // session once as a migration.
+    const activeSessionId = await store.get<string>('activeSessionId');
+    if (activeSessionId) {
+      currentSession.value = savedSessions.value.find((s) => s.id === activeSessionId) ?? null;
+    } else if (activeSessionId === null) {
+      currentSession.value = savedSessions.value
+        .filter((s) => s.supportsLoadSession)
+        .sort((a, b) => b.lastUpdated - a.lastUpdated)[0] ?? null;
+    }
     
     // Load app version (Tauri API on desktop/mobile, build-time inject on web)
     try {
@@ -111,6 +210,7 @@ export const useSessionStore = defineStore('session', () => {
   async function saveSessionsToStore() {
     if (store) {
       await store.set('sessions', savedSessions.value);
+      await store.set('activeSessionId', currentSession.value?.id ?? '');
       await store.save();
     }
   }
@@ -126,7 +226,10 @@ export const useSessionStore = defineStore('session', () => {
     acpClient = null;
     isConnected.value = false;
     isLoading.value = false;
+    queuedPrompts.value = [];
     pendingPermission.value = null;
+    // Keep `currentSession` so the UI can offer a reconnect (the Mobile
+    // Agent server keeps the agent process alive across the drop).
     error.value = `Connection lost: ${reason ?? 'transport closed'}`;
   }
 
@@ -367,17 +470,15 @@ export const useSessionStore = defineStore('session', () => {
           throw new Error('Connection cancelled');
         }
 
-        // The factory opens a WebSocket / HTTP connection based on
-        // agentConfig.transport.
-        acpClient = await createAcpClient({ name: agentName, config: agentConfig });
+        // Server-provided agents get a concrete bridge URL (agent + cwd);
+        // other remote agents use the URL from their config.
+        const effective = effectiveAgentConfig(agentConfig, cwd);
+        // The factory opens a WebSocket / HTTP connection based on the
+        // effective config's transport.
+        acpClient = await createAcpClient({ name: agentName, config: effective });
       }
 
-      acpClient.onSessionUpdate = handleSessionUpdate;
-      // Surface unexpected transport closes (e.g. WebSocket drop while idle)
-      // to the UI so users don't sit on a stale "connected" state forever.
-      acpClient.onTransportClose = (reason) => {
-        handleUnexpectedClose(reason);
-      };
+      attachBridgeCallbacks(acpClient);
       
       // Sync bridge's pendingPermissionRequest to store's pendingPermission
       watch(
@@ -409,8 +510,8 @@ export const useSessionStore = defineStore('session', () => {
           },
         },
         clientInfo: {
-          name: 'acp-ui',
-          title: 'ACP UI',
+          name: 'mobile-agent',
+          title: 'Mobile Agent',
           version: appVersion,
         },
       });
@@ -487,6 +588,8 @@ export const useSessionStore = defineStore('session', () => {
         lastUpdated: Date.now(),
         cwd,
         supportsLoadSession,
+        // Server-assigned session id (set via the $/mobileAgent/session note).
+        serverSessionId: serverSessionId.value ?? undefined,
       };
 
       currentSession.value = session;
@@ -567,10 +670,21 @@ export const useSessionStore = defineStore('session', () => {
 
   // Resume existing session
   async function resumeSession(savedSession: SavedSession): Promise<void> {
+    // A session row can receive several taps before the first handshake
+    // finishes. Do not open a second ACP connection for the same store.
+    if (isLoading.value || isConnecting.value) return;
     isLoading.value = true;
     error.value = null;
 
     try {
+      // Switching from another live session must close its transport before
+      // attaching this client to the selected server session.
+      if (acpClient) {
+        const previousClient = acpClient;
+        acpClient = null;
+        await previousClient.disconnect();
+      }
+      isConnected.value = false;
       const configStore = useConfigStore();
       const agentConfig: AgentConfig | undefined = configStore.getAgent(savedSession.agentName);
       if (!agentConfig) {
@@ -578,17 +692,22 @@ export const useSessionStore = defineStore('session', () => {
       }
 
       // Create ACP client bridge (transport selected based on agent config).
+      // For server agents this reattaches to the same server-side session so
+      // the still-running agent process is reused.
+      const effective = effectiveAgentConfig(
+        agentConfig,
+        savedSession.cwd,
+        savedSession.serverSessionId
+      );
       acpClient = await createAcpClient({
         name: savedSession.agentName,
-        config: agentConfig,
+        config: effective,
       });
-      acpClient.onSessionUpdate = handleSessionUpdate;
-      // Surface unexpected transport closes (e.g. WebSocket dropped while idle,
-      // local agent process crashed) so the UI doesn't sit on a stale
-      // "connected" view forever.
-      acpClient.onTransportClose = (reason) => {
-        handleUnexpectedClose(reason);
-      };
+      attachBridgeCallbacks(acpClient);
+      // Make the session's server id current for subsequent reconnects.
+      if (savedSession.serverSessionId) {
+        serverSessionId.value = savedSession.serverSessionId;
+      }
 
       // Sync bridge's pendingPermissionRequest to store's pendingPermission
       watch(
@@ -613,8 +732,8 @@ export const useSessionStore = defineStore('session', () => {
           },
         },
         clientInfo: {
-          name: 'acp-ui',
-          title: 'ACP UI',
+          name: 'mobile-agent',
+          title: 'Mobile Agent',
           version: appVersion,
         },
       });
@@ -706,6 +825,13 @@ export const useSessionStore = defineStore('session', () => {
       throw new Error('No active session');
     }
 
+    // ACP v1 keeps session/prompt pending for the full turn. Queue follow-up
+    // messages locally instead of sending overlapping prompt requests.
+    if (isLoading.value) {
+      queuedPrompts.value.push(text);
+      return;
+    }
+
     // Add user message
     messages.value.push({
       id: crypto.randomUUID(),
@@ -742,6 +868,12 @@ export const useSessionStore = defineStore('session', () => {
       }
     } finally {
       isLoading.value = false;
+      const nextPrompt = queuedPrompts.value.shift();
+      if (nextPrompt && isConnected.value && acpClient) {
+        void sendPrompt(nextPrompt).catch((e) => {
+          error.value = e instanceof Error ? e.message : String(e);
+        });
+      }
     }
   }
 
@@ -814,6 +946,7 @@ export const useSessionStore = defineStore('session', () => {
     
     currentSession.value = null;
     isConnected.value = false;
+    queuedPrompts.value = [];
     messages.value = [];
     toolCalls.value.clear();
     availableModes.value = [];
@@ -821,12 +954,20 @@ export const useSessionStore = defineStore('session', () => {
     availableCommands.value = [];
     availableModels.value = [];
     currentModelId.value = '';
+    serverSessionId.value = null;
+    pendingElicitation.value = null;
+    await saveSessionsToStore();
   }
 
   // Delete saved session
   async function deleteSession(sessionId: string): Promise<void> {
-    savedSessions.value = savedSessions.value.filter(s => s.id !== sessionId);
+    const session = savedSessions.value.find((s) => s.id === sessionId);
+    savedSessions.value = savedSessions.value.filter((s) => s.id !== sessionId);
     await saveSessionsToStore();
+    // Also tell the server to stop the agent process for this session.
+    if (session?.serverSessionId) {
+      void deleteServerSession(session.serverSessionId);
+    }
   }
 
   // Set session mode
@@ -921,12 +1062,15 @@ export const useSessionStore = defineStore('session', () => {
     savedSessions,
     currentSession,
     messages,
+    queuedPrompts,
     isConnected,
     isLoading,
     isConnecting,
     isReconnecting,
     error,
     pendingPermission,
+    pendingElicitation,
+    serverSessionId,
     pendingAuthMethods,
     pendingAuthAgentName,
     availableModes,
@@ -961,6 +1105,7 @@ export const useSessionStore = defineStore('session', () => {
     setModel,
     clearError,
     tryReconnect,
+    dismissElicitation,
     
     // Expose client for permission handling
     get acpClient() { return acpClient; },

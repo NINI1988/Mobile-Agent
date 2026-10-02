@@ -1,0 +1,23 @@
+{
+  "name": "Mobile Agent",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "forwardPorts": [12000],
+  "portsAttributes": {
+    "12000": {
+      "label": "Mobile Agent",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "bash scripts/codespace-setup.sh",
+  "postStartCommand": "bash scripts/codespace-start.sh",
+  "postAttachCommand": "bash scripts/codespace-start.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["Vue.volar"]
+    }
+  },
+  "remoteUser": "node"
+}

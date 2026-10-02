@@ -10,6 +10,7 @@ import ChatView from './components/ChatView.vue';
 import PermissionDialog from './components/PermissionDialog.vue';
 import SettingsView from './components/SettingsView.vue';
 import AuthMethodDialog from './components/AuthMethodDialog.vue';
+import ElicitationDialog from './components/ElicitationDialog.vue';
 import TrafficMonitor from './components/TrafficMonitor.vue';
 import StartupProgress from './components/StartupProgress.vue';
 import type { SavedSession } from './lib/types';
@@ -95,6 +96,7 @@ async function handleManualReconnect() {
 
 // Watch for permission requests from session store
 const pendingPermission = computed(() => sessionStore.pendingPermission);
+const pendingElicitation = computed(() => sessionStore.pendingElicitation);
 
 // Watch for auth method selection requests
 const pendingAuthMethods = computed(() => sessionStore.pendingAuthMethods);
@@ -126,6 +128,24 @@ onMounted(async () => {
   const savedCwd = await prefsStore.get<string>('lastCwd');
   if (savedCwd) {
     selectedCwd.value = savedCwd;
+  } else if (configStore.serverAvailable && configStore.serverCwd) {
+    // Running inside the Mobile Agent server: default the working directory
+    // to the workspace the server was started in, so a new session works
+    // without typing a path.
+    selectedCwd.value = configStore.serverCwd;
+  }
+
+  // Prefer the server's configured default agent over the first in the list.
+  if (configStore.serverDefaultAgent) {
+    selectedAgent.value = configStore.serverDefaultAgent;
+  }
+
+  // The session store restores the last active resumable session from disk.
+  // Reflect its agent and working directory in the controls before starting
+  // the automatic reconnect below.
+  if (sessionStore.currentSession) {
+    selectedAgent.value = sessionStore.currentSession.agentName;
+    selectedCwd.value = sessionStore.currentSession.cwd;
   }
 
   // Hook foreground-reconnect listeners. `pageshow` fires both on initial
@@ -138,6 +158,10 @@ onMounted(async () => {
     window.addEventListener('pageshow', scheduleReconnect);
     window.addEventListener('online', handleOnline);
   }
+
+  // `pageshow` can fire before the async store initialization completes on a
+  // full page reload, so make the initial reconnect attempt explicitly here.
+  void sessionStore.tryReconnect();
 });
 
 async function handleAgentSelect(agentName: string) {
@@ -270,7 +294,7 @@ function clearError() {
       :class="{ 'is-drawer': isNarrowLayout }"
     >
       <div class="sidebar-header">
-        <h1>ACP UI</h1>
+        <h1>Mobile Agent</h1>
         <div class="header-actions">
           <button 
             class="settings-btn" 
@@ -423,7 +447,7 @@ function clearError() {
         
         <!-- Welcome screen when not connected -->
         <div v-else class="welcome-screen">
-          <h2>Welcome to ACP UI</h2>
+          <h2>Welcome to Mobile Agent</h2>
           <p>Select an agent and create a new session to get started.</p>
           <p v-if="!hasAgents" class="hint">
             Configure agents in your config file to begin.
@@ -452,6 +476,13 @@ function clearError() {
       :agent-name="pendingAuthAgentName"
       @select="handleAuthMethodSelect"
       @cancel="handleAuthMethodCancel"
+    />
+
+    <!-- Device-code / URL elicitation (e.g. Codex ChatGPT login) -->
+    <ElicitationDialog
+      v-if="pendingElicitation"
+      :elicitation="pendingElicitation"
+      @dismiss="sessionStore.dismissElicitation()"
     />
 
     <!-- Settings -->

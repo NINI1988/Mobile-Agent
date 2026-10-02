@@ -22,6 +22,7 @@ const submitOnEnter = !isMobile();
 const expandedThoughts = ref<Set<string>>(new Set());
 
 const messages = computed(() => sessionStore.messageList);
+const queuedPrompts = computed(() => sessionStore.queuedPrompts);
 const isLoading = computed(() => sessionStore.isLoading);
 const isReconnecting = computed(() => sessionStore.isReconnecting);
 const currentSession = computed(() => sessionStore.currentSession);
@@ -57,7 +58,7 @@ watch(messages, async () => {
 
 async function handleSend() {
   const text = inputText.value.trim();
-  if (!text || isLoading.value) return;
+  if (!text || !sessionStore.isConnected || isReconnecting.value) return;
   
   inputText.value = '';
   try {
@@ -255,17 +256,20 @@ function getStatusIcon(status: string): string {
                 ? 'Type your message... (/ for commands)'
                 : 'Type your message...')
         "
-        :disabled="isLoading || isReconnecting"
+        :disabled="!sessionStore.isConnected || isReconnecting"
         @keydown="handleKeyDown"
         rows="3"
       />
       <button 
         class="send-btn"
-        :disabled="!inputText.trim() || isLoading || isReconnecting"
+        :disabled="!inputText.trim() || !sessionStore.isConnected || isReconnecting"
         @click="handleSend"
       >
-        Send
+        {{ isLoading ? 'Queue' : 'Send' }}
       </button>
+      <div v-if="queuedPrompts.length" class="queued-prompts" role="status">
+        {{ queuedPrompts.length }} message{{ queuedPrompts.length === 1 ? '' : 's' }} queued
+      </div>
     </div>
   </div>
 </template>
@@ -470,9 +474,17 @@ function getStatusIcon(status: string): string {
 .input-container {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 1rem;
   border-top: 1px solid var(--border-color, #e0e0e0);
+}
+
+.queued-prompts {
+  flex-basis: 100%;
+  order: 1;
+  color: var(--text-secondary, #666);
+  font-size: 0.85rem;
 }
 
 textarea {

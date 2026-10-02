@@ -44,6 +44,10 @@ export class TransportListeners<T> {
     };
   }
 
+  hasListeners(): boolean {
+    return this.callbacks.size > 0;
+  }
+
   emit(value: T): void {
     // Snapshot to avoid mutation during iteration if a callback unsubscribes.
     for (const cb of [...this.callbacks]) {

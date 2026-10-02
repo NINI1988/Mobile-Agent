@@ -72,6 +72,13 @@ export class WebSocketTransport implements AcpTransport {
   private closed = false;
   /** Periodic heartbeat timer (see {@link DEFAULT_HEARTBEAT_MS}). */
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Frames that arrived before the first `onMessage` subscriber was attached.
+   * The bridge subscribes a tick after `connect()` resolves, so a server that
+   * greets the socket immediately (e.g. the Mobile Agent session note) could
+   * otherwise be dropped. Flushed on first subscription.
+   */
+  private pendingFrames: string[] = [];
 
   private constructor(ws: WebSocket, heartbeatMs: number) {
     this.ws = ws;
@@ -159,12 +166,12 @@ export class WebSocketTransport implements AcpTransport {
       const data = ev.data;
       if (data.indexOf('\n') === -1) {
         const trimmed = data.trim();
-        if (trimmed.length > 0) this.messageListeners.emit(trimmed);
+        if (trimmed.length > 0) this.deliver(trimmed);
         return;
       }
       for (const line of data.split('\n')) {
         const trimmed = line.trim();
-        if (trimmed.length > 0) this.messageListeners.emit(trimmed);
+        if (trimmed.length > 0) this.deliver(trimmed);
       }
     } else {
       // Binary frames are not part of ACP. Surface a clear error rather than
@@ -180,7 +187,20 @@ export class WebSocketTransport implements AcpTransport {
     this.closeListeners.emit(reason);
     this.messageListeners.clear();
     this.closeListeners.clear();
+    this.pendingFrames = [];
     this.ws = null;
+  }
+
+  /**
+   * Deliver a frame to message listeners, or queue it if no listener has
+   * subscribed yet (see {@link pendingFrames}).
+   */
+  private deliver(frame: string): void {
+    if (this.messageListeners.hasListeners()) {
+      this.messageListeners.emit(frame);
+    } else {
+      this.pendingFrames.push(frame);
+    }
   }
 
   /**
@@ -235,7 +255,13 @@ export class WebSocketTransport implements AcpTransport {
   }
 
   onMessage(cb: (json: string) => void): Unsubscribe {
-    return this.messageListeners.add(cb);
+    const unsubscribe = this.messageListeners.add(cb);
+    if (this.pendingFrames.length > 0) {
+      const frames = this.pendingFrames;
+      this.pendingFrames = [];
+      for (const frame of frames) cb(frame);
+    }
+    return unsubscribe;
   }
 
   onClose(cb: (reason?: string) => void): Unsubscribe {

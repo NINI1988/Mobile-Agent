@@ -45,8 +45,14 @@ export default defineConfig(async ({ mode }) => {
       ? {
           // Browser dev server: use Vite defaults so it works behind common
           // proxies / Dev Tunnels without the strict-port behaviour Tauri
-          // requires.
+          // requires. In web mode we also proxy the Mobile Agent server's
+          // HTTP API and WebSocket bridge, so `npm run dev:web` gives HMR
+          // against a separately running `npm run server`.
           port: 5173,
+          proxy: {
+            '/api': 'http://localhost:12000',
+            '/ws': { target: 'ws://localhost:12000', ws: true },
+          },
         }
       : {
           port: 1420,

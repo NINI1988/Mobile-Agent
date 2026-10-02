@@ -23,6 +23,13 @@ const restricted = restrictedTransports();
 const agentLabels = computed<Record<string, string>>(() => {
   const out: Record<string, string> = {};
   for (const name of agents.value) {
+    const cfg = configStore.getAgent(name);
+    // Server-provided agents are the normal case in a Codespace; don't
+    // clutter their label with a transport suffix.
+    if (cfg?.serverAgentId) {
+      out[name] = name;
+      continue;
+    }
     const kind = configStore.getAgentTransportKind(name);
     out[name] = kind === 'stdio' ? name : `${name} (${kind})`;
   }
