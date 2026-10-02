@@ -1,4 +1,4 @@
-# ACP UI
+# Mobile Agent
 
 <a href="https://apps.microsoft.com/detail/9P76NGS1VF2L?referrer=appbadge&mode=full" target="_blank"  rel="noopener noreferrer">
 	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
@@ -7,6 +7,37 @@
 A modern, cross-platform client for the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) on desktop, mobile, and the web. Connect to AI coding agents like GitHub Copilot, Claude Code, Gemini CLI, Qwen Code, Codex CLI, OpenCode, OpenClaw, Kiro CLI, Hermes Agent, and any ACP-compatible agent from a unified interface.
 
 ![ACP UI Screenshot](assets/screenshot.png)
+
+> **Mobile Agent** is a mobile-first fork of [ACP UI](https://github.com/formulahendry/acp-ui) by
+> Jun Han ([@formulahendry](https://github.com/formulahendry)), used under the MIT License.
+> It keeps the whole ACP UI client (chat, sessions, tool calls, permissions, reconnect) and adds
+> a small built-in server so the app can run inside a GitHub Codespace and drive a coding agent
+> from your phone. See [Mobile Agent server](#-mobile-agent-server) below.
+
+## 📱 What is Mobile Agent?
+
+Mobile Agent turns a GitHub Codespace (or any dev container) into a coding-agent backend you can
+drive from a phone browser. One small Node process serves the web app, exposes a WebSocket ACP
+endpoint, and launches a local coding agent over stdio — no separate bridge, database, or cloud
+infrastructure.
+
+```text
+Mobile browser (phone)
+        │  WebSocket (wss://)
+        ▼
+Mobile Agent server
+        │  stdio (ACP, newline-delimited JSON-RPC)
+        ▼
+ACP agent adapter (e.g. codex-acp)
+        │
+        ▼
+Coding agent (Codex, Copilot, Gemini, …)
+```
+
+The browser speaks plain ACP over the WebSocket; the server only translates ACP-over-WebSocket to
+ACP-over-stdio and keeps the agent alive across phone disconnects. Existing ACP UI behaviour
+(sessions, `session/load` reconnect, permissions, tool calls, model/mode selection, Markdown) is
+reused unchanged.
 
 ## 🌍 Try it in your browser
 
@@ -46,6 +77,14 @@ Then open the app normally. Alternatives if you'd rather not use the terminal:
 
 ## ✨ Features
 
+- **Mobile-first chat UI** — The chat is the whole interface on a phone; tool calls and agent
+  activity stay available but out of the way
+- **Built-in server for Codespaces** — One `npm start` serves the app, the WebSocket ACP bridge, and
+  the agent process (no separate `stdio-to-ws`)
+- **Survives disconnects** — The agent keeps running when your phone drops the socket, and the
+  session is reattached on reconnect
+- **Device-code sign-in in the GUI** — Codex (and any agent using URL elicitation) shows the
+  verification link and one-time code in the app, with copy-to-clipboard
 - **Multi-Agent Support** — Connect to any ACP-compatible agent
 - **Remote agents over WebSocket** — Talk to agents on another machine via `ws://` / `wss://`
 - **Web app** — Run in any modern browser at [acp-ui.github.io](https://acp-ui.github.io/) without installing anything
@@ -187,6 +226,117 @@ Both `ws://` (cleartext, for LAN / Dev Tunnels) and `wss://` (TLS) are accepted.
 
 > **Note**: Filesystem RPCs (`fs/read_text_file`, `fs/write_text_file`) are only available on Tauri desktop (Windows, macOS, Linux). On mobile and web clients the capabilities are advertised as `false` and any incoming `fs/*` request from the agent is rejected with JSON-RPC `-32601 Method not found`. For remote agents the working directory path is interpreted on the **agent's host**, not on the client device.
 
+## 📡 Mobile Agent server
+
+The server lives in [`server/`](server) and is a few hundred lines of plain Node ESM — no build
+step, no framework, no database. It does three things:
+
+1. serves the built web app (`dist-web/`) as static files,
+2. exposes a WebSocket ACP endpoint at `/ws`, and
+3. spawns the configured ACP agent over stdio and keeps it alive across client disconnects.
+
+It replaces the external [`@rebornix/stdio-to-ws`](https://www.npmjs.com/package/@rebornix/stdio-to-ws)
+bridge: the same translation now happens in-process, so there is one component to run instead of two.
+(`stdio-to-ws` still works and is still documented below if you prefer a standalone bridge.)
+
+### Quick start in a Codespace / dev container
+
+This repo ships a [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) that builds
+the web app and starts the server automatically. Open the repo in a Codespace, then open the
+forwarded port **12000** on your phone:
+
+```text
+https://<codespace-name>-12000.<region>.github.dev/
+```
+
+Locally it is just:
+
+```sh
+npm install
+npm start          # serve an existing dist-web/ build + WebSocket bridge
+# or
+npm run serve      # build the web app, then start
+# or, for a live-reloading frontend + bridge during development
+npm run dev:server
+```
+
+The server prints the URL to open (including the Codespace URL) on startup.
+
+### Using Mobile Agent in another project
+
+You can drive *any* dev container with Mobile Agent without copying this repo in. From the root of
+the project you want to work on:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/NINI1988/Mobile-Agent/main/scripts/install.sh | bash
+```
+
+The script clones Mobile Agent into `~/.mobile-agent/app`, builds the web bundle, and starts the
+server with the working directory set to the project you ran it from. Install a coding agent
+(e.g. `codex-acp`), open the printed URL on your phone, and sign in from the GUI. Environment
+overrides: `MOBILE_AGENT_CWD`, `MOBILE_AGENT_AGENT`, `PORT`, `MOBILE_AGENT_REPO`, `MOBILE_AGENT_REF`,
+`MOBILE_AGENT_DIR`.
+
+### Configuring agents
+
+An “agent” is just a local command that speaks ACP over stdio. The server resolves the registry in
+this order (highest priority first):
+
+1. `MOBILE_AGENT_AGENTS` — a JSON object in the environment,
+2. `.mobile-agent/agents.json` in the workspace,
+3. a built-in default: **Codex** via `npx -y @agentclientprotocol/codex-acp@latest`.
+
+```json
+{
+  "agents": {
+    "codex":   { "name": "Codex",   "command": "npx", "args": ["-y", "@agentclientprotocol/codex-acp@latest"], "env": { "NO_BROWSER": "1" } },
+    "copilot": { "name": "GitHub Copilot", "command": "copilot", "args": ["--acp"] },
+    "gemini":  { "name": "Gemini",  "command": "gemini", "args": ["--experimental-acp"] }
+  }
+}
+```
+
+`MOBILE_AGENT_AGENT` picks the default agent (the one the GUI preselects). Each entry supports
+`name`, `command`, `args`, `env`, and `cwd`; adding an agent is a single JSON object, not a plugin.
+The GUI lists every configured agent in the Agent dropdown, so switching between Codex, Copilot,
+Gemini, etc. is just a selection.
+
+### Signing in (device code)
+
+Some agents need an interactive login. Codex is the worked example: when it is not signed in, the
+GUI shows an **Authentication Required** dialog; choose **ChatGPT (device code)** and the server
+surfaces the verification URL and one-time code as a card in the chat, with a **Copy** button and a
+link that opens the sign-in page. Enter the code there and the agent continues automatically —
+there is no terminal step. (The server declares the URL-elicitation capability and answers the
+agent’s `elicitation/create` request itself, then pushes the code to the GUI.)
+
+### Security
+
+The server has **no authentication** — it is meant to run behind a tunnel you control.
+A GitHub Codespace port is private to your account by default, so the forwarded URL is only
+reachable by you. Do not expose the port publicly (set it to Public in the Ports tab) or bind
+it to an untrusted network: anyone who can reach `/ws` can run commands through the agent in
+your workspace. Keep `HOST` at its default (`0.0.0.0`) only inside the container and put a
+tunnel (Codespaces, Dev Tunnels, SSH) in front of it otherwise.
+
+### Sessions and reconnect
+
+The server owns the agent process and its session. When the phone drops the WebSocket — backgrounded
+app, changed network, locked screen — the agent keeps running. When the browser reconnects it sends
+the server session id it saved, and the server reattaches it to the *same* process; the conversation
+is restored through the existing ACP `session/load` path. No second session implementation is
+involved: the client-side reconnect logic is unchanged, it simply has a server-side session id to
+return to.
+
+### HTTP endpoints
+
+| Path | Purpose |
+|------|---------|
+| `/ws?session=<id>&agent=<id>&cwd=<path>` | ACP-over-WebSocket bridge |
+| `/api/health` | liveness + configured agents |
+| `/api/agents` | agent list + default + workspace cwd |
+| `/api/sessions` | known sessions (`GET`), `DELETE /api/sessions/<id>` to stop one |
+
 ## 🌐 Connecting from your phone or browser
 
 The mobile and web builds can only talk to remote agents (no subprocess in a phone or browser sandbox), so you need to expose a local stdio agent over a network endpoint. The recommended bridge is [`@rebornix/stdio-to-ws`](https://www.npmjs.com/package/@rebornix/stdio-to-ws), which speaks ACP-over-WebSocket on one end and stdio on the other. The same setup works for the web build at [acp-ui.github.io](https://acp-ui.github.io/) — with one extra rule: the HTTPS page can only open `wss://` URLs (see [HTTPS pages must use `wss://`](#browser-only-https-pages-must-use-wss) below).
@@ -318,6 +468,27 @@ npm run preview:web
 
 The live deployment at [acp-ui.github.io](https://acp-ui.github.io/) is published from `dist-web/` by [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) on every push to `main`.
 
+### Running the Mobile Agent server
+
+The server is plain Node ESM under [`server/`](server) — there is nothing to compile. It serves
+`dist-web/` and bridges ACP over WebSocket to a stdio agent.
+
+```sh
+npm run build:web     # produce dist-web/
+npm start             # serve dist-web/ + WebSocket bridge on PORT (default 12000)
+
+npm run serve         # build:web then start, in one step
+npm run dev:web       # Vite dev server (HMR); it proxies /ws and /api to npm run dev:server
+npm run dev:server    # server only
+
+npm run test:server   # node:test suite for the bridge (uses a mock ACP agent)
+```
+
+Useful environment variables: `PORT`, `HOST`, `MOBILE_AGENT_CWD` (workspace the agent edits),
+`MOBILE_AGENT_AGENT` (default agent id), `MOBILE_AGENT_AGENTS` (inline agent registry JSON),
+`MOBILE_AGENT_IDLE_TIMEOUT_MS` (stop an idle agent after N ms; `0` disables),
+`MOBILE_AGENT_OPEN=0` (don’t try to open a browser on startup).
+
 ### Building for Android
 
 Prerequisites:
@@ -384,7 +555,9 @@ iOS doesn't ship a binary today because it requires per-developer signing and an
 
 - [Agent Client Protocol](https://agentclientprotocol.com/)
 - [Tauri Documentation](https://tauri.app/)
+- [ACP UI (upstream)](https://github.com/formulahendry/acp-ui) — the project Mobile Agent is forked from
 
 ## 📄 License
 
-MIT License
+MIT License. Mobile Agent is a fork of [ACP UI](https://github.com/formulahendry/acp-ui) by Jun Han
+([@formulahendry](https://github.com/formulahendry)); the original copyright and license are retained.

@@ -1,4 +1,4 @@
-// Types for ACP UI application
+// Types for the Mobile Agent application
 
 /**
  * Transport kinds supported by the frontend.
@@ -24,6 +24,17 @@ export interface AgentConfig {
   // ----- remote fields (used when transport != 'stdio') -----
   url?: string;
   headers?: Record<string, string>;
+
+  /**
+   * Set for agents provided by the Mobile Agent server. The server spawns
+   * the actual ACP process; the client connects to the server's WebSocket
+   * bridge. The concrete URL (session/cwd query params) is filled in by the
+   * session store at connect time.
+   */
+  serverAgentId?: string;
+
+  /** Display name reported by the server (falls back to the config key). */
+  serverName?: string;
 }
 
 export interface AgentsConfig {
@@ -77,6 +88,11 @@ export interface SavedSession {
   lastUpdated: number;
   cwd: string;
   supportsLoadSession?: boolean; // Whether the agent supports session/load
+  /**
+   * Session id assigned by the Mobile Agent server, used to reattach to the
+   * same server-side session (and its still-running agent) after a drop.
+   */
+  serverSessionId?: string;
 }
 
 export interface ChatMessage {
@@ -106,6 +122,17 @@ export interface PermissionOption {
   kind: string;
   name: string;
   optionId: string;
+}
+
+/**
+ * A URL elicitation surfaced by the Mobile Agent server, used for Codex
+ * device-code login: the user opens `url` in a browser and enters `code`.
+ */
+export interface ElicitationInfo {
+  url: string | null;
+  code: string | null;
+  message: string;
+  elicitationId: string | null;
 }
 
 // Session Modes

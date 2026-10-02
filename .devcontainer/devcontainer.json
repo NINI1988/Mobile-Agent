@@ -1,0 +1,25 @@
+{
+  "name": "Mobile Agent",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "forwardPorts": [12000],
+  "portsAttributes": {
+    "12000": {
+      "label": "Mobile Agent",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  // Build the web bundle and start the Mobile Agent server (static app +
+  // WebSocket ACP bridge). The server keeps agent sessions alive across
+  // phone disconnects and auto-opens the Codespace URL.
+  "postCreateCommand": "npm install && npm run build:web",
+  "postStartCommand": "pgrep -f 'server/index.mjs' >/dev/null || (nohup npm start > /tmp/mobile-agent.log 2>&1 &)",
+  "customizations": {
+    "vscode": {
+      "extensions": ["Vue.volar"]
+    }
+  },
+  "remoteUser": "node"
+}

@@ -69,6 +69,38 @@ export class AcpClientBridge implements Client {
   // Session update callback
   public onSessionUpdate: ((notification: SessionNotification) => void) | null = null;
 
+  /**
+   * Callback for server-extension notifications in the `$/mobileAgent/*`
+   * namespace (session id assignment, device-code elicitation, startup
+   * logs). These are emitted by the Mobile Agent server, not the ACP agent,
+   * and are surfaced to the UI without being part of the ACP protocol.
+   *
+   * Implemented as an accessor so that notifications arriving before the UI
+   * has attached its handler (e.g. the session-id note, which the server
+   * sends immediately on connect) are queued and flushed on assignment.
+   */
+  private serverNotificationHandler:
+    | ((method: string, params: unknown) => void)
+    | null = null;
+  private queuedServerNotifications: Array<{ method: string; params: unknown }> = [];
+
+  set onServerNotification(
+    cb: ((method: string, params: unknown) => void) | null
+  ) {
+    this.serverNotificationHandler = cb;
+    if (cb && this.queuedServerNotifications.length > 0) {
+      const queued = this.queuedServerNotifications;
+      this.queuedServerNotifications = [];
+      for (const n of queued) cb(n.method, n.params);
+    }
+  }
+
+  get onServerNotification():
+    | ((method: string, params: unknown) => void)
+    | null {
+    return this.serverNotificationHandler;
+  }
+
   /** Optional callback for when the underlying transport closes unexpectedly. */
   public onTransportClose: ((reason?: string) => void) | null = null;
 
@@ -251,6 +283,34 @@ export class AcpClientBridge implements Client {
       if (this.onSessionUpdate) {
         this.onSessionUpdate(params as SessionNotification);
       }
+      return;
+    }
+    // Mobile Agent server extensions (`$/mobileAgent/*`).
+    if (method.startsWith('$/mobileAgent/')) {
+      if (this.serverNotificationHandler) {
+        this.serverNotificationHandler(method, params);
+      } else {
+        this.queuedServerNotifications.push({ method, params });
+      }
+    }
+  }
+
+  /**
+   * Per-method request timeouts (ms). Interactive methods that wait on the
+   * user (sign-in, a long agent turn) must not be killed by the default
+   * request timeout, so they get a much larger budget.
+   */
+  private static readonly DEFAULT_TIMEOUT_MS = 60_000;
+  private static readonly LONG_TIMEOUT_MS = 15 * 60_000;
+
+  private static timeoutForMethod(method: string): number {
+    switch (method) {
+      case 'authenticate':
+      case 'session/prompt':
+      case 'session/load':
+        return AcpClientBridge.LONG_TIMEOUT_MS;
+      default:
+        return AcpClientBridge.DEFAULT_TIMEOUT_MS;
     }
   }
 
@@ -289,7 +349,8 @@ export class AcpClientBridge implements Client {
         reject(e);
       });
 
-      // Timeout after 60 seconds (increased for auth flows)
+      // Interactive methods (auth, long prompts) get a generous timeout;
+      // see timeoutForMethod.
       setTimeout(() => {
         if (this.messageResolvers.has(id)) {
           this.messageResolvers.delete(id);
@@ -297,7 +358,7 @@ export class AcpClientBridge implements Client {
           this.pendingMethods.delete(id);
           reject(new Error(`Request timeout: ${method}`));
         }
-      }, 60000);
+      }, AcpClientBridge.timeoutForMethod(method));
     });
   }
 
