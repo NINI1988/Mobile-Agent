@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { canPickFolder, pickFolder, loadKvStore, type KVStore } from './lib/host';
 import { useConfigStore } from './stores/config';
 import { useSessionStore } from './stores/session';
@@ -76,6 +76,11 @@ const isConnected = computed(() => sessionStore.isConnected);
 const isLoading = computed(() => sessionStore.isLoading);
 const isConnecting = computed(() => sessionStore.isConnecting);
 const isReconnecting = computed(() => sessionStore.isReconnecting);
+watch(isReconnecting, (reconnecting, wasReconnecting) => {
+  if (wasReconnecting && !reconnecting && typeof window !== 'undefined') {
+    requestAnimationFrame(() => window.scrollTo(0, 0));
+  }
+});
 const error = computed(() => sessionStore.error || configStore.error);
 const hasAgents = computed(() => configStore.hasAgents);
 
