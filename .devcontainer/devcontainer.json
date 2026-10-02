@@ -14,10 +14,12 @@
   // One-time setup: build the web bundle and install the Codex ACP agent
   // globally so the first session starts instantly (no npx download).
   "postCreateCommand": "npm install && npm run build:web && (npm install -g @agentclientprotocol/codex-acp@latest || echo 'codex-acp global install failed; server will fall back to npx')",
-  // Every start: launch the server if it isn't already running. It serves the
-  // web app, the WebSocket ACP bridge, and keeps agent sessions alive across
-  // phone disconnects. Opening the forwarded port auto-opens the browser.
-  "postStartCommand": "pgrep -f 'server/index.mjs' >/dev/null || (MOBILE_AGENT_OPEN=0 nohup npm start > /tmp/mobile-agent.log 2>&1 &)",
+  // Every start: launch the server if it isn't already running. The `[s]erver`
+  // trick stops pgrep from matching its own command line (a plain
+  // 'server/index.mjs' pattern matches the guard itself, so the server would
+  // never start). Logs: /tmp/mobile-agent.log — or run the VS Code task
+  // "Mobile Agent: server" (Terminal → Run Task) to watch them live.
+  "postStartCommand": "pgrep -f '[s]erver/index.mjs' >/dev/null || (MOBILE_AGENT_OPEN=0 nohup npm start > /tmp/mobile-agent.log 2>&1 &)",
   "customizations": {
     "vscode": {
       "extensions": ["Vue.volar"]

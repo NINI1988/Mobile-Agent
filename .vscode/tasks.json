@@ -1,0 +1,38 @@
+{
+  // Run with: Terminal → Run Task… → "Mobile Agent: server"
+  // This keeps the server in the foreground so you can watch its output.
+  // The dev container also starts it in the background on every start; its
+  // log is at /tmp/mobile-agent.log.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Mobile Agent: server",
+      "type": "shell",
+      "command": "npm start",
+      "options": {
+        "env": {
+          "MOBILE_AGENT_OPEN": "0"
+        }
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mobile Agent: build web",
+      "type": "shell",
+      "command": "npm run build:web",
+      "problemMatcher": []
+    },
+    {
+      "label": "Mobile Agent: server tests",
+      "type": "shell",
+      "command": "npm run test:server",
+      "problemMatcher": []
+    }
+  ]
+}

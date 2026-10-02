@@ -72,9 +72,9 @@ else
 fi
 
 # Stop a previous instance, if any.
-if pgrep -f "$DIR/server/index.mjs" >/dev/null 2>&1; then
+if pgrep -f '[s]erver/index.mjs' >/dev/null 2>&1; then
   log "Stopping previous server"
-  pkill -f "$DIR/server/index.mjs" || true
+  pkill -f '[s]erver/index.mjs' || true
   sleep 1
 fi
 
@@ -85,7 +85,7 @@ PORT="$PORT" MOBILE_AGENT_CWD="$WORKSPACE" MOBILE_AGENT_AGENT="${MOBILE_AGENT_AG
   nohup node server/index.mjs > /tmp/mobile-agent.log 2>&1 &
 
 sleep 2
-if pgrep -f "$DIR/server/index.mjs" >/dev/null 2>&1; then
+if pgrep -f '[s]erver/index.mjs' >/dev/null 2>&1; then
   log "Server started in the background — it keeps running after this script exits."
   log "Logs: /tmp/mobile-agent.log"
   if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then

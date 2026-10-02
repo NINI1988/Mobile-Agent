@@ -262,6 +262,13 @@ npm run dev:server
 
 The server prints the URL to open (including the Codespace URL) on startup.
 
+**Where is the server output?** The dev container starts the server in the background, so it does
+not appear in the main terminal. To watch it live, use **Terminal → Run Task… → “Mobile Agent:
+server”** (defined in `.vscode/tasks.json`); that task runs in the foreground in its own panel. The
+background instance writes its output to **`/tmp/mobile-agent.log`**, and the Codespace startup
+logs are under the **Codespaces** output channel (View → Output → Codespaces). To restart it by
+hand: `pkill -f '[s]erver/index.mjs' && npm start`.
+
 ### Using Mobile Agent in another project
 
 You can drive *any* dev container with Mobile Agent without copying this repo in. From the root of
